@@ -2,6 +2,7 @@ __pycache__
 wandb
 gencode*
 GENCODE*
+!gencode_GRCh38p14.v49_processed.zip
 data/
 results/
 past_trash/

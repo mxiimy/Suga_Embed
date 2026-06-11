@@ -141,8 +141,8 @@ class GetEmbeddingRinalMo:
         self.max_seq_len = 1022
         self.method = opt.rinalmo_method
 
-        self.model = RiNALMoModel.from_pretrained("multimolecule/rinalmo")
-        self.tokenizer = RnaTokenizer.from_pretrained("multimolecule/rinalmo")
+        self.model = RiNALMoModel.from_pretrained("multimolecule/rinalmo-giga")
+        self.tokenizer = RnaTokenizer.from_pretrained("multimolecule/rinalmo-giga")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.model = self.model.to(self.device)
@@ -386,7 +386,7 @@ def main(opt: argparse.Namespace):  # noqa: C901
         emb_array = (all_emb5, all_emb3)
 
     elif opt.rinalmo:
-        print("Using RiNARMo for Embedding !!!")
+        print("Using RiNALMo for Embedding !!!")
         embedder = GetEmbeddingRinalMo(opt)
         seq5utr, seq3utr = seq_df["5UTR"].values, seq_df["3UTR"].values
 
