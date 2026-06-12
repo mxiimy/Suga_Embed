@@ -20,8 +20,8 @@ pyensembl="*"
 scikit-learn= "*"
 seaborn = "*"
 statannotations="*"
-torch = {version="2.2.0",source='torch_cu118'}
-torchvision = {version='0.17.0',source='torch_cu118'}
+torch = {version="2.2.0",source='torch_cu121'}
+torchvision = {version='0.17.0',source='torch_cu121'}
 tqdm = "*"
 ViennaRNA="*"
 wandb = "*"
@@ -31,8 +31,8 @@ ruff = "*"
 jupyterlab = "*"
 
 [[tool.poetry.source]]
-name = "torch_cu118"
-url = "https://download.pytorch.org/whl/cu118"
+name = "torch_cu121"
+url = "https://download.pytorch.org/whl/cu121"
 priority = "explicit"
 
 [build-system]

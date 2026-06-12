@@ -56,6 +56,12 @@ def _argparse():
         choices=["pkl", "pt"],
         help="save file format. pickle or pt",
     )
+    args.add_argument(
+        "--chunk_size",
+        type=int,
+        default=2000,
+        help="number of sequences per saved chunk file",
+    )
     opt = args.parse_args()
     return opt
 
@@ -333,9 +339,13 @@ class GetFeature:
         return feature_dic
 
 
+def _chunk_path(output_path: str, chunk_idx: int) -> str:
+    base, ext = os.path.splitext(output_path)
+    return f"{base}_chunk_{chunk_idx:04d}{ext}"
+
+
 def main(opt: argparse.Namespace):  # noqa: C901
     seq_df = pd.read_csv(opt.i, index_col=0)
-    emb_array = []
 
     if opt.feature_craft:
         print("Creating features !!!")
@@ -371,56 +381,85 @@ def main(opt: argparse.Namespace):  # noqa: C901
         sys.exit(0)
 
     elif opt.with_pad:
-        print("RNA-FM batch processing")
+        seq5utr, seq3utr = seq_df["5UTR"].values, seq_df["3UTR"].values
+        total = len(seq5utr)
+        print(f"RNA-FM batch processing — starting {total} sequences")
         all_emb5, all_emb3 = None, None
         embedder = GetEmbeddingWithPad(opt)
-        seq5utr, seq3utr = seq_df["5UTR"].values, seq_df["3UTR"].values
-        for utr5, utr3 in tqdm(zip(seq5utr, seq3utr)):
+        for i, (utr5, utr3) in enumerate(tqdm(zip(seq5utr, seq3utr))):
             emb5, emb3 = embedder.get(utr5), embedder.get(utr3)
             if all_emb5 is None:
                 all_emb5, all_emb3 = emb5, emb3
             else:
                 all_emb5 = torch.concat([all_emb5, emb5])
                 all_emb3 = torch.concat([all_emb3, emb3])
+            if (i + 1) % 100 == 0:
+                print(f"Processed {i + 1}/{total} sequences")
 
-        emb_array = (all_emb5, all_emb3)
+        print("Writing down embedding results ...")
+        with open(opt.o, "wb") as f:
+            pickle.dump((all_emb5, all_emb3), f)
+        print(f"Done. Embeddings saved to {opt.o}")
 
     elif opt.rinalmo:
-        print("Using RiNALMo for Embedding !!!")
-        embedder = GetEmbeddingRinalMo(opt)
         seq5utr, seq3utr = seq_df["5UTR"].values, seq_df["3UTR"].values
+        total = len(seq5utr)
+        print(f"Using RiNALMo for Embedding — starting {total} sequences, chunk_size={opt.chunk_size}")
+        embedder = GetEmbeddingRinalMo(opt)
 
-        for utr5, utr3 in tqdm(zip(seq5utr, seq3utr)):
-            emb5, emb3 = embedder.get(utr5), embedder.get(utr3)
-            emb_array.append([emb5, emb3])
+        for chunk_idx, chunk_start in enumerate(range(0, total, opt.chunk_size)):
+            chunk_end = min(chunk_start + opt.chunk_size, total)
+            chunk_path = _chunk_path(opt.o, chunk_idx)
 
-        emb5_all = torch.stack([e[0] for e in emb_array])
-        emb3_all = torch.stack([e[1] for e in emb_array])
+            if os.path.exists(chunk_path):
+                print(f"Chunk {chunk_idx} ({chunk_start}–{chunk_end}) already exists, skipping")
+                continue
 
-        emb_pt = torch.concat([emb5_all, emb3_all])
+            print(f"Processing chunk {chunk_idx} (seq {chunk_start}–{chunk_end})...")
+            chunk_array = []
+            for i in tqdm(range(chunk_start, chunk_end)):
+                emb5, emb3 = embedder.get(seq5utr[i]), embedder.get(seq3utr[i])
+                chunk_array.append([emb5, emb3])
+
+            emb5_chunk = torch.stack([e[0] for e in chunk_array])
+            emb3_chunk = torch.stack([e[1] for e in chunk_array])
+            torch.save(torch.concat([emb5_chunk, emb3_chunk]), chunk_path)
+            print(f"Saved chunk {chunk_idx} → {chunk_path}")
+            torch.cuda.empty_cache()
+
+        print("All chunks saved.")
 
     else:
-        print("Using 'RNA-FM' for embedding !!! ")
-        embedder = GetEmbedding(opt)
         seq5utr, seq3utr = seq_df["5UTR"].values, seq_df["3UTR"].values
+        total = len(seq5utr)
+        print(f"Using RNA-FM for embedding — starting {total} sequences, chunk_size={opt.chunk_size}")
+        embedder = GetEmbedding(opt)
 
-        for utr5, utr3 in tqdm(zip(seq5utr, seq3utr)):
-            if opt.over_length == "edge":
-                emb5, emb3 = embedder.get(utr5, region="utr5"), embedder.get(
-                    utr3, region="utr3"
-                )
+        for chunk_idx, chunk_start in enumerate(range(0, total, opt.chunk_size)):
+            chunk_end = min(chunk_start + opt.chunk_size, total)
+            chunk_path = _chunk_path(opt.o, chunk_idx)
 
-            else:
-                emb5, emb3 = embedder.get(utr5), embedder.get(utr3)
-            emb_array.append([emb5, emb3])
+            if os.path.exists(chunk_path):
+                print(f"Chunk {chunk_idx} ({chunk_start}–{chunk_end}) already exists, skipping")
+                continue
 
-    print("Writing down embedding results ...")
-    if opt.format == "pkl":
-        with open(opt.o, "wb") as f:
-            pickle.dump(emb_array, f)
+            print(f"Processing chunk {chunk_idx} (seq {chunk_start}–{chunk_end})...")
+            chunk_array = []
+            for i in tqdm(range(chunk_start, chunk_end)):
+                utr5, utr3 = seq5utr[i], seq3utr[i]
+                if opt.over_length == "edge":
+                    emb5 = embedder.get(utr5, region="utr5")
+                    emb3 = embedder.get(utr3, region="utr3")
+                else:
+                    emb5, emb3 = embedder.get(utr5), embedder.get(utr3)
+                chunk_array.append([emb5, emb3])
 
-    elif opt.format == "pt":
-        torch.save(emb_pt, opt.o)
+            with open(chunk_path, "wb") as f:
+                pickle.dump(chunk_array, f)
+            print(f"Saved chunk {chunk_idx} → {chunk_path}")
+            torch.cuda.empty_cache()
+
+        print("All chunks saved.")
 
 
 if __name__ == "__main__":
